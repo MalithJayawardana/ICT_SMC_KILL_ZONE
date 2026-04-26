@@ -1,0 +1,188 @@
+//+------------------------------------------------------------------+
+//|                                                SessionBoxes.mq5  |
+//|           Updated: Tester Fix + Transparent + Session H/L        |
+//+------------------------------------------------------------------+
+#property indicator_chart_window
+#property indicator_plots 0
+
+//--- Inputs for Asian Session
+sinput string  Sec1 = "--- Asian Range ---";
+input string   InpAsianStart  = "00:00";
+input string   InpAsianEnd    = "08:00";
+input color    InpAsianColor  = clrLavender;
+input string   InpAsianText   = "Asian Range";
+
+//--- Inputs for London Session
+sinput string  Sec2 = "--- London Killzone ---";
+input string   InpLondonStart = "08:00";
+input string   InpLondonEnd   = "16:00";
+input color    InpLondonColor = clrCornflowerBlue;
+input string   InpLondonText  = "London Session";
+
+//--- Inputs for New York Session
+sinput string  Sec3 = "--- New York Killzone ---";
+input string   InpNYStart     = "13:00";
+input string   InpNYEnd       = "21:00";
+input color    InpNYColor     = clrSalmon;
+input string   InpNYText      = "NY Session";
+
+//--- Inputs for Overlap Session
+sinput string  Sec4 = "--- Overlap (Lon & NY) ---";
+input string   InpOverlapStart = "13:00";
+input string   InpOverlapEnd   = "16:00";
+input color    InpOverlapColor = clrMediumSeaGreen;
+input string   InpOverlapText  = "Overlap";
+
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+   return(INIT_SUCCEEDED);
+  }
+
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+   ObjectsDeleteAll(0, "AsianBox");
+   ObjectsDeleteAll(0, "LondonBox");
+   ObjectsDeleteAll(0, "NYBox");
+   ObjectsDeleteAll(0, "OverlapBox");
+  }
+
+//+------------------------------------------------------------------+
+//| Parse "HH:MM" string into a datetime offset from day start       |
+//+------------------------------------------------------------------+
+datetime GetTimeFromString(datetime startOfDay, string timeStr)
+  {
+   string parts[];
+   ArrayResize(parts, 2);
+   StringSplit(timeStr, ':', parts);
+   return startOfDay
+          + (datetime)(StringToInteger(parts[0]) * 3600)
+          + (datetime)(StringToInteger(parts[1]) * 60);
+  }
+
+//+------------------------------------------------------------------+
+//| Get High/Low of bars WITHIN a session time window                |
+//| (Works in Strategy Tester because uses the bar arrays directly)  |
+//+------------------------------------------------------------------+
+void GetSessionHighLow(const datetime &time[],
+                       const double   &high[],
+                       const double   &low[],
+                       const int       rates_total,
+                       datetime        sess_start,
+                       datetime        sess_end,
+                       double         &sess_high,
+                       double         &sess_low)
+  {
+   sess_high = -DBL_MAX;
+   sess_low  =  DBL_MAX;
+
+   for(int i = 0; i < rates_total; i++)
+     {
+      if(time[i] >= sess_start && time[i] < sess_end)
+        {
+         if(high[i] > sess_high) sess_high = high[i];
+         if(low[i]  < sess_low)  sess_low  = low[i];
+        }
+     }
+
+   // If no bars found in session yet, use a neutral fallback
+   if(sess_high == -DBL_MAX || sess_low == DBL_MAX)
+     {
+      sess_high = 0;
+      sess_low  = 0;
+     }
+  }
+
+//+------------------------------------------------------------------+
+int OnCalculate(const int rates_total,
+                const int prev_calculated,
+                const datetime &time[],
+                const double   &open[],
+                const double   &high[],
+                const double   &low[],
+                const double   &close[],
+                const long     &tick_volume[],
+                const long     &volume[],
+                const int      &spread[])
+  {
+   if(rates_total < 1) return(0);
+
+   // --- Use last bar time (works in both Live & Strategy Tester) ---
+   datetime currentTime = time[rates_total - 1];
+   MqlDateTime dt;
+   TimeToStruct(currentTime, dt);
+   dt.hour = 0; dt.min = 0; dt.sec = 0;
+   datetime startOfDay = StructToTime(dt);
+
+   // --- Calculate session window times ---
+   datetime asianStart  = GetTimeFromString(startOfDay, InpAsianStart);
+   datetime asianEnd    = GetTimeFromString(startOfDay, InpAsianEnd);
+   datetime lonStart    = GetTimeFromString(startOfDay, InpLondonStart);
+   datetime lonEnd      = GetTimeFromString(startOfDay, InpLondonEnd);
+   datetime nyStart     = GetTimeFromString(startOfDay, InpNYStart);
+   datetime nyEnd       = GetTimeFromString(startOfDay, InpNYEnd);
+   datetime ovrStart    = GetTimeFromString(startOfDay, InpOverlapStart);
+   datetime ovrEnd      = GetTimeFromString(startOfDay, InpOverlapEnd);
+
+   // --- Get actual High/Low for each session from bar data ---
+   double asianH, asianL, lonH, lonL, nyH, nyL, ovrH, ovrL;
+   GetSessionHighLow(time, high, low, rates_total, asianStart, asianEnd, asianH, asianL);
+   GetSessionHighLow(time, high, low, rates_total, lonStart,   lonEnd,   lonH,   lonL);
+   GetSessionHighLow(time, high, low, rates_total, nyStart,    nyEnd,    nyH,    nyL);
+   GetSessionHighLow(time, high, low, rates_total, ovrStart,   ovrEnd,   ovrH,   ovrL);
+
+   // --- Draw transparent boxes with session-specific H/L ---
+   if(asianH > 0) DrawBoxAndText("AsianBox",   asianStart, asianEnd, asianH, asianL, InpAsianColor,   InpAsianText);
+   if(lonH   > 0) DrawBoxAndText("LondonBox",  lonStart,   lonEnd,   lonH,   lonL,   InpLondonColor,  InpLondonText);
+   if(nyH    > 0) DrawBoxAndText("NYBox",       nyStart,    nyEnd,    nyH,    nyL,    InpNYColor,      InpNYText);
+   if(ovrH   > 0) DrawBoxAndText("OverlapBox", ovrStart,   ovrEnd,   ovrH,   ovrL,   InpOverlapColor, InpOverlapText);
+
+   return(rates_total);
+  }
+
+//+------------------------------------------------------------------+
+//| Draw a TRANSPARENT (border-only) box + text label on TOP         |
+//+------------------------------------------------------------------+
+void DrawBoxAndText(string   name,
+                    datetime start_time,
+                    datetime end_time,
+                    double   p_high,
+                    double   p_low,
+                    color    clr,
+                    string   label_text)
+  {
+   //--- 1. Box (border only, no fill → transparent)
+   string box_name = name + "_Today";
+   if(ObjectFind(0, box_name) < 0)
+      ObjectCreate(0, box_name, OBJ_RECTANGLE, 0, start_time, p_high, end_time, p_low);
+
+   ObjectSetInteger(0, box_name, OBJPROP_TIME,  0, start_time);
+   ObjectSetDouble(0,  box_name, OBJPROP_PRICE, 0, p_high);
+   ObjectSetInteger(0, box_name, OBJPROP_TIME,  1, end_time);
+   ObjectSetDouble(0,  box_name, OBJPROP_PRICE, 1, p_low);
+   ObjectSetInteger(0, box_name, OBJPROP_COLOR,     clr);
+   ObjectSetInteger(0, box_name, OBJPROP_STYLE,     STYLE_SOLID);
+   ObjectSetInteger(0, box_name, OBJPROP_WIDTH,     2);         // Border thickness
+   ObjectSetInteger(0, box_name, OBJPROP_BACK,      false);     // ON TOP of candles
+   ObjectSetInteger(0, box_name, OBJPROP_FILL,      false);     // TRANSPARENT (no fill)
+   ObjectSetInteger(0, box_name, OBJPROP_HIDDEN,    true);
+   ObjectSetInteger(0, box_name, OBJPROP_SELECTABLE,false);
+   ObjectSetInteger(0, box_name, OBJPROP_ZORDER,    0);
+
+   //--- 2. Text label at the LOW of the session (bottom of box)
+   string txt_name = name + "_Text";
+   if(ObjectFind(0, txt_name) < 0)
+      ObjectCreate(0, txt_name, OBJ_TEXT, 0, start_time, p_low);
+
+   ObjectSetInteger(0, txt_name, OBJPROP_TIME,  0, start_time);
+   ObjectSetDouble(0,  txt_name, OBJPROP_PRICE, 0, p_low);      // Placed at LOW
+   ObjectSetString(0,  txt_name, OBJPROP_TEXT,  " " + label_text);
+   ObjectSetInteger(0, txt_name, OBJPROP_COLOR,      clr);       // Same color as border
+   ObjectSetInteger(0, txt_name, OBJPROP_FONTSIZE,   9);
+   ObjectSetString(0,  txt_name, OBJPROP_FONT,       "Arial Bold");
+   ObjectSetInteger(0, txt_name, OBJPROP_BACK,       false);
+   ObjectSetInteger(0, txt_name, OBJPROP_HIDDEN,     true);
+   ObjectSetInteger(0, txt_name, OBJPROP_SELECTABLE, false);
+  }
+//+------------------------------------------------------------------+

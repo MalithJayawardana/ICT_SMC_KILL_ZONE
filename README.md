@@ -1,1 +1,48 @@
-Sure thing! Since you're looking to put this on GitHub, you need a README.md that looks professional, explains what the indicator does, and guides users on how to install it.Here is a clean, well-formatted README designed for a trading repository.SessionBoxes MQL5 IndicatorSessionBoxes is a lightweight, high-performance MetaTrader 5 (MT5) indicator designed to visually plot trading sessions (Asian, London, New York, and the Overlap) directly on your chart. It automatically calculates the High and Low of each session window and draws a transparent box around the price action.🚀 Key FeaturesCustomizable Sessions: Define your own start and end times for four distinct trading windows.Dynamic High/Low Calculation: Automatically detects and wraps the box around the price extremes within the specified time range.Strategy Tester Optimized: Unlike many session indicators, this one is built to function correctly during backtesting.Clean Visuals: Uses transparent (border-only) boxes to avoid cluttering your candles, with session labels placed at the bottom-left of each box.Overlap Support: Specifically includes a fourth customizable zone (defaulted to London/NY overlap) to highlight high-volatility periods.🛠 InstallationOpen your MetaTrader 5 Terminal.Go to File > Open Data Folder.Navigate to MQL5 > Indicators.Create a folder named MarketSessions (optional) and paste the SessionBoxes.mq5 file inside.Restart MT5 or right-click Indicators in the Navigator panel and select Refresh.Drag and drop the indicator onto any chart.⚙️ Input ParametersParameterDescriptionDefault ValueStart/End TimesThe time window (HH:MM) for the session.Varies per sessionColorThe color of the box border and label.Lavender, Blue, Salmon, GreenLabel TextThe text displayed at the bottom of the box.e.g., "London Session"📸 How it WorksThe indicator scans the bar data for the current day, identifies the bars that fall between your start and end times, and calculates:$SessionHigh = \max(High_{bars})$$SessionLow = \min(Low_{bars})$It then draws an OBJ_RECTANGLE with OBJPROP_FILL set to false for a transparent look that doesn't hide price action.📝 LicenseThis project is open-source. Feel free to modify the code to suit your specific trading strategy or Killzone requirements.
+# 📊 SessionBoxes MT5 Indicator
+
+**SessionBoxes** is a professional MetaTrader 5 (MT5) indicator designed to visually frame major trading sessions (Asian, London, New York, and Overlap). It automatically identifies the High and Low of each session and draws clean, transparent boxes to help traders identify liquidity zones and session ranges.
+
+---
+
+## ✨ Features
+* **4 Customizable Zones:** Pre-configured for Asian, London, New York, and the Lon/NY Overlap.
+* **High/Low Accuracy:** Dynamically calculates the highest high and lowest low within the specific time window.
+* **Strategy Tester Fix:** Optimized to work perfectly during backtesting (Visual Mode).
+* **Non-Intrusive Design:** Transparent boxes (border-only) ensure your candles and price action remain clearly visible.
+* **Auto-Cleanup:** Automatically removes all drawings when the indicator is removed from the chart.
+
+---
+
+## 🛠 Installation
+1.  **Download** the `SessionBoxes.mq5` file.
+2.  Open your MT5, go to **File > Open Data Folder**.
+3.  Navigate to `MQL5 > Indicators`.
+4.  **Paste** the file into the Indicators folder.
+5.  **Restart** MT5 or **Refresh** the Indicators list in the Navigator.
+6.  Drag the indicator onto your chart and allow **DLL imports** if prompted.
+
+---
+
+## ⚙️ Default Settings
+| Session | Start Time | End Time | Default Color |
+| :--- | :--- | :--- | :--- |
+| **Asian Range** | 00:00 | 08:00 | Lavender |
+| **London Session** | 08:00 | 16:00 | Cornflower Blue |
+| **NY Session** | 13:00 | 21:00 | Salmon |
+| **Overlap** | 13:00 | 16:00 | Medium Sea Green |
+
+---
+
+## 🚀 How to Use
+This indicator is perfect for traders using:
+* **ICT / SMC Concepts:** To identify Asian Range liquidity or Killzones.
+* **Breakout Strategies:** To trade London or NY open breakouts.
+* **Volatility Analysis:** To see how price reacts during session overlaps.
+
+---
+
+## 📝 License
+This project is open-source. Feel free to modify the code and adapt it to your own trading style.
+
+---
+*Developed for MetaTrader 5*

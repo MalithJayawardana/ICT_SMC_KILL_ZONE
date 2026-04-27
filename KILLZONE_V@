@@ -1,0 +1,605 @@
+//+------------------------------------------------------------------+
+//|                                            SessionBoxes.mq5      |
+//|   Full Version: Boxes + Open Lines + Midpoint + Pips + Alerts   |
+//|                 + Kill Zones + Dashboard + Hunt Labels           |
+//+------------------------------------------------------------------+
+#property indicator_chart_window
+#property indicator_plots 0
+
+//=== ASIAN SESSION ================================================
+sinput string  Sec1           = "═══ Asian Range ═══";
+input  string  InpAsianStart  = "00:00";
+input  string  InpAsianEnd    = "08:00";
+input  color   InpAsianColor  = clrLavender;
+input  string  InpAsianText   = "Asian Range";
+
+//=== LONDON SESSION ===============================================
+sinput string  Sec2            = "═══ London Killzone ═══";
+input  string  InpLondonStart  = "08:00";
+input  string  InpLondonEnd    = "16:00";
+input  color   InpLondonColor  = clrCornflowerBlue;
+input  string  InpLondonText   = "London";
+
+//=== NEW YORK SESSION =============================================
+sinput string  Sec3        = "═══ New York Killzone ═══";
+input  string  InpNYStart  = "13:00";
+input  string  InpNYEnd    = "21:00";
+input  color   InpNYColor  = clrSalmon;
+input  string  InpNYText   = "New York";
+
+//=== OVERLAP SESSION ==============================================
+sinput string  Sec4             = "═══ Overlap (Lon & NY) ═══";
+input  string  InpOverlapStart  = "13:00";
+input  string  InpOverlapEnd    = "16:00";
+input  color   InpOverlapColor  = clrMediumSeaGreen;
+input  string  InpOverlapText   = "Overlap";
+
+//=== KILL ZONES ===================================================
+sinput string  Sec5             = "═══ Kill Zones ═══";
+input  bool    InpShowKillZones = true;
+input  string  InpLonKZStart    = "02:00";
+input  string  InpLonKZEnd      = "05:00";
+input  color   InpLonKZColor    = clrSteelBlue;
+input  string  InpNYKZStart     = "07:00";
+input  string  InpNYKZEnd       = "10:00";
+input  color   InpNYKZColor     = clrTomato;
+input  string  InpNYPMKZStart   = "13:00";
+input  string  InpNYPMKZEnd     = "14:00";
+input  color   InpNYPMKZColor   = clrOrangeRed;
+
+//=== FEATURES =====================================================
+sinput string  Sec6              = "═══ Features ═══";
+input  int     InpLookbackDays   = 5;
+input  bool    InpShowLiqLines   = true;
+input  string  InpLiqLineEnd     = "16:00";
+input  bool    InpShowMidpoint   = true;
+input  bool    InpShowOpenLines  = true;
+input  bool    InpShowPips       = true;
+input  bool    InpShowDashboard  = true;
+input  bool    InpAlertOnBreak   = true;
+
+//=== DASHBOARD POSITION ==========================================
+sinput string  Sec7              = "═══ Dashboard ═══";
+input  ENUM_BASE_CORNER InpDashCorner = CORNER_LEFT_UPPER;
+input  int     InpDashX          = 15;
+input  int     InpDashY          = 20;
+
+//--- Global vars for alerts
+double g_AsianHigh_D0 = 0;
+double g_AsianLow_D0  = 0;
+bool   g_AlertedHigh  = false;
+bool   g_AlertedLow   = false;
+
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+   g_AlertedHigh = false;
+   g_AlertedLow  = false;
+   return(INIT_SUCCEEDED);
+  }
+
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+   ObjectsDeleteAll(0, "SB_");
+  }
+
+//+------------------------------------------------------------------+
+// "HH:MM" → datetime offset from dayStart
+//+------------------------------------------------------------------+
+datetime GetTimeFromString(datetime startOfDay, string timeStr)
+  {
+   string parts[];
+   StringSplit(timeStr, ':', parts);
+   if(ArraySize(parts) < 2) return startOfDay;
+   return startOfDay
+          + (datetime)(StringToInteger(parts[0]) * 3600)
+          + (datetime)(StringToInteger(parts[1]) * 60);
+  }
+
+//+------------------------------------------------------------------+
+// Session High/Low from bar arrays (Strategy Tester compatible)
+//+------------------------------------------------------------------+
+void GetSessionHighLow(const datetime &time[],
+                       const double   &high[],
+                       const double   &low[],
+                       const int       rates_total,
+                       datetime        sess_start,
+                       datetime        sess_end,
+                       double         &sess_high,
+                       double         &sess_low)
+  {
+   sess_high = -DBL_MAX;
+   sess_low  =  DBL_MAX;
+
+   for(int i = 0; i < rates_total; i++)
+     {
+      if(time[i] >= sess_start && time[i] < sess_end)
+        {
+         if(high[i] > sess_high) sess_high = high[i];
+         if(low[i]  < sess_low)  sess_low  = low[i];
+        }
+     }
+
+   if(sess_high == -DBL_MAX || sess_low == DBL_MAX)
+     { sess_high = 0; sess_low = 0; }
+  }
+
+//+------------------------------------------------------------------+
+// Session Open Price - session start candle close
+//+------------------------------------------------------------------+
+double GetSessionOpenPrice(const datetime &time[],
+                           const double   &open[],
+                           const int       rates_total,
+                           datetime        sess_start)
+  {
+   for(int i = 0; i < rates_total; i++)
+     {
+      if(time[i] >= sess_start)
+         return open[i];
+     }
+   return 0;
+  }
+
+//+------------------------------------------------------------------+
+// Draw transparent box + label
+//+------------------------------------------------------------------+
+void DrawBoxAndText(string   name,
+                    datetime start_time,
+                    datetime end_time,
+                    double   p_high,
+                    double   p_low,
+                    color    clr,
+                    string   label_text,
+                    bool     fill = false)
+  {
+   string box_name = "SB_" + name + "_Box";
+   if(ObjectFind(0, box_name) < 0)
+      ObjectCreate(0, box_name, OBJ_RECTANGLE, 0, start_time, p_high, end_time, p_low);
+
+   ObjectSetInteger(0, box_name, OBJPROP_TIME,       0, start_time);
+   ObjectSetDouble(0,  box_name, OBJPROP_PRICE,      0, p_high);
+   ObjectSetInteger(0, box_name, OBJPROP_TIME,       1, end_time);
+   ObjectSetDouble(0,  box_name, OBJPROP_PRICE,      1, p_low);
+   ObjectSetInteger(0, box_name, OBJPROP_COLOR,      clr);
+   ObjectSetInteger(0, box_name, OBJPROP_STYLE,      STYLE_SOLID);
+   ObjectSetInteger(0, box_name, OBJPROP_WIDTH,      fill ? 1 : 2);
+   ObjectSetInteger(0, box_name, OBJPROP_BACK,       true);
+   ObjectSetInteger(0, box_name, OBJPROP_FILL,       fill);
+   ObjectSetInteger(0, box_name, OBJPROP_HIDDEN,     true);
+   ObjectSetInteger(0, box_name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, box_name, OBJPROP_ZORDER,     fill ? 0 : 1);
+
+   if(label_text != "")
+     {
+      string txt_name = "SB_" + name + "_Txt";
+      if(ObjectFind(0, txt_name) < 0)
+         ObjectCreate(0, txt_name, OBJ_TEXT, 0, start_time, p_high);
+
+      ObjectSetInteger(0, txt_name, OBJPROP_TIME,       0, start_time);
+      ObjectSetDouble(0,  txt_name, OBJPROP_PRICE,      0, p_high);
+      ObjectSetString(0,  txt_name, OBJPROP_TEXT,       " " + label_text);
+      ObjectSetInteger(0, txt_name, OBJPROP_COLOR,      clr);
+      ObjectSetInteger(0, txt_name, OBJPROP_FONTSIZE,   9);
+      ObjectSetString(0,  txt_name, OBJPROP_FONT,       "Arial Bold");
+      ObjectSetInteger(0, txt_name, OBJPROP_BACK,       false);
+      ObjectSetInteger(0, txt_name, OBJPROP_HIDDEN,     true);
+      ObjectSetInteger(0, txt_name, OBJPROP_SELECTABLE, false);
+     }
+  }
+
+//+------------------------------------------------------------------+
+// Draw horizontal line (for Open, Midpoint)
+//+------------------------------------------------------------------+
+void DrawHLine(string   name,
+               datetime start_time,
+               datetime end_time,
+               double   price,
+               color    clr,
+               ENUM_LINE_STYLE style,
+               int      width,
+               string   label = "")
+  {
+   string ln = "SB_" + name;
+   if(ObjectFind(0, ln) < 0)
+      ObjectCreate(0, ln, OBJ_TREND, 0, start_time, price, end_time, price);
+
+   ObjectSetInteger(0, ln, OBJPROP_TIME,       0, start_time);
+   ObjectSetDouble(0,  ln, OBJPROP_PRICE,      0, price);
+   ObjectSetInteger(0, ln, OBJPROP_TIME,       1, end_time);
+   ObjectSetDouble(0,  ln, OBJPROP_PRICE,      1, price);
+   ObjectSetInteger(0, ln, OBJPROP_COLOR,      clr);
+   ObjectSetInteger(0, ln, OBJPROP_STYLE,      style);
+   ObjectSetInteger(0, ln, OBJPROP_WIDTH,      width);
+   ObjectSetInteger(0, ln, OBJPROP_RAY_RIGHT,  false);
+   ObjectSetInteger(0, ln, OBJPROP_BACK,       false);
+   ObjectSetInteger(0, ln, OBJPROP_HIDDEN,     true);
+   ObjectSetInteger(0, ln, OBJPROP_SELECTABLE, false);
+
+   if(label != "")
+     {
+      string lt = "SB_" + name + "_Lbl";
+      if(ObjectFind(0, lt) < 0)
+         ObjectCreate(0, lt, OBJ_TEXT, 0, end_time, price);
+      ObjectSetInteger(0, lt, OBJPROP_TIME,       0, end_time);
+      ObjectSetDouble(0,  lt, OBJPROP_PRICE,      0, price);
+      ObjectSetString(0,  lt, OBJPROP_TEXT,       " " + label);
+      ObjectSetInteger(0, lt, OBJPROP_COLOR,      clr);
+      ObjectSetInteger(0, lt, OBJPROP_FONTSIZE,   8);
+      ObjectSetString(0,  lt, OBJPROP_FONT,       "Arial");
+      ObjectSetInteger(0, lt, OBJPROP_BACK,       false);
+      ObjectSetInteger(0, lt, OBJPROP_HIDDEN,     true);
+      ObjectSetInteger(0, lt, OBJPROP_SELECTABLE, false);
+     }
+  }
+
+//+------------------------------------------------------------------+
+// Liquidity Lines - extend Asian H/L forward
+//+------------------------------------------------------------------+
+void DrawLiquidityLines(string   name,
+                        datetime line_start,
+                        datetime line_end,
+                        double   p_high,
+                        double   p_low,
+                        color    clr)
+  {
+   DrawHLine(name + "_LiqH", line_start, line_end, p_high, clr, STYLE_DASH, 1);
+   DrawHLine(name + "_LiqL", line_start, line_end, p_low,  clr, STYLE_DASH, 1);
+  }
+
+//+------------------------------------------------------------------+
+// Dashboard (corner panel)
+//+------------------------------------------------------------------+
+void DrawDashboard(datetime curTime,
+                   datetime asianS, datetime asianE,
+                   datetime lonS,   datetime lonE,
+                   datetime nyS,    datetime nyE,
+                   double   asianH, double asianL)
+  {
+   string prefix = "SB_DASH_";
+
+   // Session status
+   string asianStatus = (curTime >= asianS && curTime < asianE) ? "  ACTIVE  " :
+                        (curTime < asianS)                       ? "  Pending " : "  Closed  ";
+   string lonStatus   = (curTime >= lonS   && curTime < lonE)   ? "  ACTIVE  " :
+                        (curTime < lonS)                         ? "  Pending " : "  Closed  ";
+   string nyStatus    = (curTime >= nyS    && curTime < nyE)     ? "  ACTIVE  " :
+                        (curTime < nyS)                          ? "  Pending " : "  Closed  ";
+
+   color asianC = (asianStatus == "  ACTIVE  ") ? clrLimeGreen :
+                  (asianStatus == "  Pending ") ? clrGold : clrDimGray;
+   color lonC   = (lonStatus   == "  ACTIVE  ") ? clrLimeGreen :
+                  (lonStatus   == "  Pending ") ? clrGold : clrDimGray;
+   color nyC    = (nyStatus    == "  ACTIVE  ") ? clrLimeGreen :
+                  (nyStatus    == "  Pending ") ? clrGold : clrDimGray;
+
+   // Asian range in pips
+   string pipsText = "";
+   if(asianH > 0 && asianL > 0)
+     {
+      double rangePips = (asianH - asianL) / (_Point * 10);
+      pipsText = "Asian Range:  " + DoubleToString(rangePips, 1) + " pips";
+     }
+
+   string lines[] = {
+      "╔══════════════════════════╗",
+      "║   SESSION TRACKER        ║",
+      "╠══════════════════════════╣",
+      "║ Asian   │" + asianStatus + "║",
+      "║ London  │" + lonStatus   + "║",
+      "║ NY      │" + nyStatus    + "║",
+      "╠══════════════════════════╣",
+      "║ " + pipsText + " ║",
+      "╚══════════════════════════╝"
+   };
+
+   color lineColors[] = {
+      clrDimGray, clrWhite, clrDimGray,
+      asianC, lonC, nyC,
+      clrDimGray, clrYellow, clrDimGray
+   };
+
+   for(int i = 0; i < ArraySize(lines); i++)
+     {
+      string obj = prefix + IntegerToString(i);
+      if(ObjectFind(0, obj) < 0)
+         ObjectCreate(0, obj, OBJ_LABEL, 0, 0, 0);
+
+      ObjectSetInteger(0, obj, OBJPROP_CORNER,    InpDashCorner);
+      ObjectSetInteger(0, obj, OBJPROP_XDISTANCE, InpDashX);
+      ObjectSetInteger(0, obj, OBJPROP_YDISTANCE, InpDashY + i * 16);
+      ObjectSetString(0,  obj, OBJPROP_TEXT,       lines[i]);
+      ObjectSetInteger(0, obj, OBJPROP_COLOR,      lineColors[i]);
+      ObjectSetInteger(0, obj, OBJPROP_FONTSIZE,   9);
+      ObjectSetString(0,  obj, OBJPROP_FONT,       "Courier New");
+      ObjectSetInteger(0, obj, OBJPROP_BACK,       false);
+      ObjectSetInteger(0, obj, OBJPROP_HIDDEN,     true);
+      ObjectSetInteger(0, obj, OBJPROP_SELECTABLE, false);
+     }
+  }
+
+//+------------------------------------------------------------------+
+// Hunt Label - Asian H/L cross වෙලාද?
+//+------------------------------------------------------------------+
+void CheckAndDrawHuntLabel(string   name,
+                           datetime asianEnd,
+                           datetime liqEnd,
+                           double   asianH,
+                           double   asianL,
+                           color    clr,
+                           const datetime &time[],
+                           const double   &close[],
+                           const int       rates_total)
+  {
+   bool highHunted = false;
+   bool lowHunted  = false;
+   datetime huntTimeH = 0, huntTimeL = 0;
+
+   for(int i = 0; i < rates_total; i++)
+     {
+      if(time[i] < asianEnd || time[i] > liqEnd) continue;
+      if(!highHunted && close[i] > asianH)
+        { highHunted = true; huntTimeH = time[i]; }
+      if(!lowHunted && close[i] < asianL)
+        { lowHunted = true; huntTimeL = time[i]; }
+     }
+
+   if(highHunted && huntTimeH > 0)
+     {
+      string hn = "SB_" + name + "_HuntH";
+      if(ObjectFind(0, hn) < 0)
+         ObjectCreate(0, hn, OBJ_TEXT, 0, huntTimeH, asianH);
+      ObjectSetInteger(0, hn, OBJPROP_TIME,       0, huntTimeH);
+      ObjectSetDouble(0,  hn, OBJPROP_PRICE,      0, asianH);
+      ObjectSetString(0,  hn, OBJPROP_TEXT,       " ✓ Asia High Hunted");
+      ObjectSetInteger(0, hn, OBJPROP_COLOR,      clrLime);
+      ObjectSetInteger(0, hn, OBJPROP_FONTSIZE,   8);
+      ObjectSetString(0,  hn, OBJPROP_FONT,       "Arial Bold");
+      ObjectSetInteger(0, hn, OBJPROP_BACK,       false);
+      ObjectSetInteger(0, hn, OBJPROP_HIDDEN,     true);
+      ObjectSetInteger(0, hn, OBJPROP_SELECTABLE, false);
+     }
+
+   if(lowHunted && huntTimeL > 0)
+     {
+      string ln = "SB_" + name + "_HuntL";
+      if(ObjectFind(0, ln) < 0)
+         ObjectCreate(0, ln, OBJ_TEXT, 0, huntTimeL, asianL);
+      ObjectSetInteger(0, ln, OBJPROP_TIME,       0, huntTimeL);
+      ObjectSetDouble(0,  ln, OBJPROP_PRICE,      0, asianL);
+      ObjectSetString(0,  ln, OBJPROP_TEXT,       " ✓ Asia Low Hunted");
+      ObjectSetInteger(0, ln, OBJPROP_COLOR,      clrOrange);
+      ObjectSetInteger(0, ln, OBJPROP_FONTSIZE,   8);
+      ObjectSetString(0,  ln, OBJPROP_FONT,       "Arial Bold");
+      ObjectSetInteger(0, ln, OBJPROP_BACK,       false);
+      ObjectSetInteger(0, ln, OBJPROP_HIDDEN,     true);
+      ObjectSetInteger(0, ln, OBJPROP_SELECTABLE, false);
+     }
+  }
+
+//+------------------------------------------------------------------+
+int OnCalculate(const int rates_total,
+                const int prev_calculated,
+                const datetime &time[],
+                const double   &open[],
+                const double   &high[],
+                const double   &low[],
+                const double   &close[],
+                const long     &tick_volume[],
+                const long     &volume[],
+                const int      &spread[])
+  {
+   if(rates_total < 2) return(0);
+
+   datetime curTime = time[rates_total - 1];
+
+   for(int d = 0; d < InpLookbackDays; d++)
+     {
+      datetime dayStart = iTime(_Symbol, PERIOD_D1, d);
+      if(dayStart == 0) continue;
+
+      string sfx = IntegerToString(d);
+
+      //=============================================================
+      // ASIAN SESSION
+      //=============================================================
+      datetime asianStart = GetTimeFromString(dayStart, InpAsianStart);
+      datetime asianEnd   = GetTimeFromString(dayStart, InpAsianEnd);
+
+      // Midnight Fix
+      { string p[]; StringSplit(InpAsianStart, ':', p);
+        if(ArraySize(p) >= 1 && StringToInteger(p[0]) >= 18) asianStart -= 86400; }
+      { string p[]; StringSplit(InpAsianEnd,   ':', p);
+        if(ArraySize(p) >= 1 && StringToInteger(p[0]) >= 18) asianEnd   -= 86400; }
+
+      double asianH, asianL;
+      GetSessionHighLow(time, high, low, rates_total, asianStart, asianEnd, asianH, asianL);
+
+      if(asianH > 0)
+        {
+         // Pips label
+         string asianLabel = InpAsianText;
+         if(InpShowPips)
+           {
+            double rng = (asianH - asianL) / (_Point * 10);
+            asianLabel = InpAsianText + "  [" + DoubleToString(rng, 1) + " pips]";
+           }
+
+         DrawBoxAndText("Asian_" + sfx, asianStart, asianEnd,
+                        asianH, asianL, InpAsianColor, asianLabel);
+
+         // Midpoint
+         if(InpShowMidpoint)
+           {
+            double mid = (asianH + asianL) / 2.0;
+            DrawHLine("Asian_" + sfx + "_Mid",
+                      asianStart, asianEnd, mid,
+                      InpAsianColor, STYLE_DOT, 1, "Mid");
+           }
+
+         // Liquidity Lines
+         if(InpShowLiqLines)
+           {
+            datetime liqEnd = GetTimeFromString(dayStart, InpLiqLineEnd);
+            DrawLiquidityLines("Asian_" + sfx, asianEnd, liqEnd, asianH, asianL, InpAsianColor);
+
+            // Hunt Labels
+            CheckAndDrawHuntLabel("Asian_" + sfx, asianEnd, liqEnd,
+                                  asianH, asianL, InpAsianColor,
+                                  time, close, rates_total);
+           }
+
+         // Save today's Asian H/L for alerts
+         if(d == 0)
+           { g_AsianHigh_D0 = asianH; g_AsianLow_D0 = asianL; }
+        }
+
+      //=============================================================
+      // LONDON SESSION
+      //=============================================================
+      datetime lonStart = GetTimeFromString(dayStart, InpLondonStart);
+      datetime lonEnd   = GetTimeFromString(dayStart, InpLondonEnd);
+      double lonH, lonL;
+      GetSessionHighLow(time, high, low, rates_total, lonStart, lonEnd, lonH, lonL);
+
+      if(lonH > 0)
+        {
+         DrawBoxAndText("London_" + sfx, lonStart, lonEnd,
+                        lonH, lonL, InpLondonColor, InpLondonText);
+
+         if(InpShowMidpoint)
+           {
+            double mid = (lonH + lonL) / 2.0;
+            DrawHLine("London_" + sfx + "_Mid",
+                      lonStart, lonEnd, mid,
+                      InpLondonColor, STYLE_DOT, 1, "Mid");
+           }
+        }
+
+      // London Session Open Line
+      if(InpShowOpenLines)
+        {
+         double lonOpen = GetSessionOpenPrice(time, open, rates_total, lonStart);
+         if(lonOpen > 0)
+            DrawHLine("London_" + sfx + "_Open",
+                      lonStart, lonEnd, lonOpen,
+                      InpLondonColor, STYLE_DASHDOT, 1, "Lon Open");
+        }
+
+      //=============================================================
+      // NEW YORK SESSION
+      //=============================================================
+      datetime nyStart = GetTimeFromString(dayStart, InpNYStart);
+      datetime nyEnd   = GetTimeFromString(dayStart, InpNYEnd);
+      double nyH, nyL;
+      GetSessionHighLow(time, high, low, rates_total, nyStart, nyEnd, nyH, nyL);
+
+      if(nyH > 0)
+        {
+         DrawBoxAndText("NY_" + sfx, nyStart, nyEnd,
+                        nyH, nyL, InpNYColor, InpNYText);
+
+         if(InpShowMidpoint)
+           {
+            double mid = (nyH + nyL) / 2.0;
+            DrawHLine("NY_" + sfx + "_Mid",
+                      nyStart, nyEnd, mid,
+                      InpNYColor, STYLE_DOT, 1, "Mid");
+           }
+        }
+
+      // NY Session Open Line
+      if(InpShowOpenLines)
+        {
+         double nyOpen = GetSessionOpenPrice(time, open, rates_total, nyStart);
+         if(nyOpen > 0)
+            DrawHLine("NY_" + sfx + "_Open",
+                      nyStart, nyEnd, nyOpen,
+                      InpNYColor, STYLE_DASHDOT, 1, "NY Open");
+        }
+
+      //=============================================================
+      // OVERLAP SESSION
+      //=============================================================
+      datetime ovrStart = GetTimeFromString(dayStart, InpOverlapStart);
+      datetime ovrEnd   = GetTimeFromString(dayStart, InpOverlapEnd);
+      double ovrH, ovrL;
+      GetSessionHighLow(time, high, low, rates_total, ovrStart, ovrEnd, ovrH, ovrL);
+      if(ovrH > 0)
+         DrawBoxAndText("Overlap_" + sfx, ovrStart, ovrEnd,
+                        ovrH, ovrL, InpOverlapColor, InpOverlapText);
+
+      //=============================================================
+      // KILL ZONES (filled light boxes)
+      //=============================================================
+      if(InpShowKillZones)
+        {
+         // London Kill Zone
+         datetime lkzS = GetTimeFromString(dayStart, InpLonKZStart);
+         datetime lkzE = GetTimeFromString(dayStart, InpLonKZEnd);
+         double lkzH, lkzL;
+         GetSessionHighLow(time, high, low, rates_total, lkzS, lkzE, lkzH, lkzL);
+         if(lkzH > 0)
+            DrawBoxAndText("LonKZ_" + sfx, lkzS, lkzE,
+                           lkzH, lkzL, InpLonKZColor, "Lon KZ", true);
+
+         // NY Kill Zone AM
+         datetime nkzS = GetTimeFromString(dayStart, InpNYKZStart);
+         datetime nkzE = GetTimeFromString(dayStart, InpNYKZEnd);
+         double nkzH, nkzL;
+         GetSessionHighLow(time, high, low, rates_total, nkzS, nkzE, nkzH, nkzL);
+         if(nkzH > 0)
+            DrawBoxAndText("NYKZAM_" + sfx, nkzS, nkzE,
+                           nkzH, nkzL, InpNYKZColor, "NY KZ AM", true);
+
+         // NY Kill Zone PM
+         datetime npmS = GetTimeFromString(dayStart, InpNYPMKZStart);
+         datetime npmE = GetTimeFromString(dayStart, InpNYPMKZEnd);
+         double npmH, npmL;
+         GetSessionHighLow(time, high, low, rates_total, npmS, npmE, npmH, npmL);
+         if(npmH > 0)
+            DrawBoxAndText("NYKZPM_" + sfx, npmS, npmE,
+                           npmH, npmL, InpNYPMKZColor, "NY KZ PM", true);
+        }
+
+      //=============================================================
+      // DASHBOARD (today only - d == 0)
+      //=============================================================
+      if(d == 0 && InpShowDashboard)
+        {
+         DrawDashboard(curTime,
+                       asianStart, asianEnd,
+                       lonStart,   lonEnd,
+                       nyStart,    nyEnd,
+                       asianH,     asianL);
+        }
+     }
+
+   //=================================================================
+   // BREAK ALERTS (today's Asian H/L only)
+   //=================================================================
+   if(InpAlertOnBreak && g_AsianHigh_D0 > 0 && rates_total >= 2)
+     {
+      double lastClose = close[rates_total - 1];
+      double prevClose = close[rates_total - 2];
+
+      if(!g_AlertedHigh && lastClose > g_AsianHigh_D0 && prevClose <= g_AsianHigh_D0)
+        {
+         g_AlertedHigh = true;
+         string msg = _Symbol + " | Asian HIGH Broken! Price: " + DoubleToString(lastClose, _Digits);
+         Alert(msg);
+         SendNotification(msg);
+        }
+
+      if(!g_AlertedLow && lastClose < g_AsianLow_D0 && prevClose >= g_AsianLow_D0)
+        {
+         g_AlertedLow = true;
+         string msg = _Symbol + " | Asian LOW Broken! Price: " + DoubleToString(lastClose, _Digits);
+         Alert(msg);
+         SendNotification(msg);
+        }
+     }
+
+   return(rates_total);
+  }
+  //+------------------------------------------------------------------+ 
